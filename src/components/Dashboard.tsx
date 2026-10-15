@@ -201,20 +201,22 @@ export function Dashboard({
               <p className="px-4 py-6 text-table text-mist">Aucun mouvement enregistré.</p>
             ) : (
               <div className="table-frame table-frame-flush rounded-b-panel">
-                <table className="data-table min-w-[26rem]">
+                <table className="data-table min-w-[20rem]">
                   <thead>
                     <tr>
                       <th>Date</th>
                       <th>Produit</th>
                       <th>Mouvement</th>
-                      <th className="num">Quantité</th>
+                      <th className="num pin-end">Quantité</th>
                     </tr>
                   </thead>
                   <tbody>
                     {overview.recentMovements.map((movement) => (
                       <tr key={movement.id}>
-                        <td className="nowrap tabular-nums text-mist">{formatDateTime(movement.createdAt)}</td>
-                        <td>
+                        {/* La carte est étroite : date, produit et libellé peuvent passer à la
+                            ligne pour que la colonne Quantité reste visible. */}
+                        <td className="tabular-nums text-mist">{formatDateTime(movement.createdAt)}</td>
+                        <td className="[overflow-wrap:anywhere]">
                           <button type="button" className="link" onClick={() => onOpenMovement(movement.productId)}>
                             {movement.productName}
                           </button>
@@ -222,13 +224,13 @@ export function Dashboard({
                             <span className="ml-2 text-meta text-faint">{movement.productReference}</span>
                           ) : null}
                         </td>
-                        <td>
+                        <td className="[&_.movement]:whitespace-normal">
                           <MovementTag
                             direction={movement.direction}
                             label={movementLabel(movement.direction, movement.source)}
                           />
                         </td>
-                        <td className="num font-semibold">{displayQuantity(movement.quantity)}</td>
+                        <td className="num pin-end font-semibold">{displayQuantity(movement.quantity)}</td>
                       </tr>
                     ))}
                   </tbody>

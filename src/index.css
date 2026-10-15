@@ -378,6 +378,16 @@ body {
     z-index: 2;
     box-shadow: inset 1px 0 0 var(--color-line);
   }
+  /* Colonne gardée au bord droit quand une carte étroite fait défiler le tableau. */
+  .data-table tbody td.pin-end {
+    position: sticky;
+    right: 0;
+    background: var(--color-surface);
+  }
+  .data-table thead th.pin-end {
+    right: 0;
+    z-index: 2;
+  }
   .data-table .nowrap {
     white-space: nowrap;
   }
