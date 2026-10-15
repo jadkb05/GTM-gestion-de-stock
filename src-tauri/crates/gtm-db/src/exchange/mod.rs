@@ -84,9 +84,12 @@ fn display_milli(milli: i64) -> String {
 /// (`datetime(..., 'localtime')`) au format français JJ/MM/AAAA HH:MM:SS.
 fn display_stamp(value: &str) -> String {
     let text = value.trim_end_matches('Z').replace('T', " ");
-    let (Some(year), Some(month), Some(day), Some(time)) =
-        (text.get(0..4), text.get(5..7), text.get(8..10), text.get(11..19))
-    else {
+    let (Some(year), Some(month), Some(day), Some(time)) = (
+        text.get(0..4),
+        text.get(5..7),
+        text.get(8..10),
+        text.get(11..19),
+    ) else {
         return text;
     };
     format!("{day}/{month}/{year} {time}")

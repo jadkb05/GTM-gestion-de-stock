@@ -475,3 +475,77 @@ fn signale_une_destination_impossible_et_n_ecrit_pas_la_date() {
     assert!(error.to_string().contains("fichier") || error.to_string().contains("extension"));
     let _ = fs::remove_dir_all(dir);
 }
+
+#[test]
+fn restaurer_le_point_de_retour_remet_l_etat_precedent_sans_le_detruire() {
+    let (dir, mut conn) = open();
+    product(&mut conn, "Ancien", "OLD-1");
+    let backup = dir.join("etat-1.gtm-backup");
+    create_backup(&conn, &backup, "0.1.0").expect("sauvegarde");
+    product(&mut conn, "Nouveau 1", "NEW-1");
+    product(&mut conn, "Nouveau 2", "NEW-2");
+    drop(conn);
+
+    restore_backup(&dir, &backup).expect("restauration de l'état 1");
+    let rollback = dir.join(ROLLBACK_NAME);
+    assert_eq!(
+        inspect_backup(&rollback)
+            .expect("point de retour")
+            .product_count,
+        3
+    );
+
+    // Le sélecteur accepte les fichiers .db : l'utilisateur choisit le point de retour.
+    let report = restore_backup(&dir, &rollback).expect("retour à l'état 2");
+    assert_eq!(report.product_count, 3);
+    let conn = connect(&dir).expect("réouverture");
+    assert_eq!(count(&conn, "SELECT COUNT(*) FROM products"), 3);
+    assert_eq!(
+        count(
+            &conn,
+            "SELECT COUNT(*) FROM products WHERE reference = 'NEW-2'"
+        ),
+        1
+    );
+    drop(conn);
+    // Le nouveau point de retour contient l'état remplacé (état 1).
+    assert_eq!(
+        inspect_backup(&rollback)
+            .expect("point de retour")
+            .product_count,
+        1
+    );
+    assert!(!dir.join(INCOMING_NAME).exists());
+    fs::remove_dir_all(dir).ok();
+}
+
+#[test]
+fn une_sauvegarde_est_un_fichier_autonome_lisible_en_lecture_seule() {
+    use std::os::unix::fs::PermissionsExt;
+    let (dir, mut conn) = open();
+    product(&mut conn, "Mastic", "MAS-1");
+    let usb = dir.join("cle-usb");
+    fs::create_dir_all(&usb).expect("dossier");
+    let backup = usb.join("stock.gtm-backup");
+    create_backup(&conn, &backup, "0.1.0").expect("sauvegarde");
+    let header = fs::read(&backup).expect("lecture");
+    // Octets 18 et 19 de l'en-tête SQLite : 1 = journal classique, 2 = WAL.
+    assert_eq!((header[18], header[19]), (1, 1));
+    assert!(!usb.join("stock.gtm-backup-wal").exists());
+
+    fs::set_permissions(&usb, fs::Permissions::from_mode(0o555)).expect("lecture seule");
+    let inspected = inspect_backup(&backup);
+    drop(conn);
+    let restored = restore_backup(&dir, &backup);
+    fs::set_permissions(&usb, fs::Permissions::from_mode(0o755)).expect("droits");
+    assert_eq!(inspected.expect("inspection").product_count, 1);
+    assert_eq!(restored.expect("restauration").product_count, 1);
+    // La base restaurée repasse en WAL à l'ouverture, comme toute base active.
+    let conn = connect(&dir).expect("réouverture");
+    let mode: String = conn
+        .query_row("PRAGMA journal_mode", [], |row| row.get(0))
+        .expect("mode");
+    assert_eq!(mode, "wal");
+    drop(conn);
+    fs::remove_dir_all(dir).ok();
+}

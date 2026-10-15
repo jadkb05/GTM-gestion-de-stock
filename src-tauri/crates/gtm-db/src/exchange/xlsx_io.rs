@@ -1,3 +1,4 @@
+use super::import::{SourceRow, SourceTable, UnreadableCell};
 use super::{Report, error::ExchangeError, generated_at};
 use calamine::{Data, Reader, open_workbook_auto};
 use rust_xlsxwriter::{Format, Workbook};
@@ -53,27 +54,59 @@ fn sheet_name(name: &str) -> String {
     .to_string()
 }
 
+#[cfg(test)]
 pub(super) fn read_xlsx(path: &Path) -> Result<Vec<Vec<String>>, ExchangeError> {
+    Ok(read_xlsx_rows(path)?
+        .rows
+        .into_iter()
+        .map(|row| row.cells)
+        .collect())
+}
+
+/// Lit la première feuille avec le numéro de ligne Excel de chaque rangée.
+/// Une cellule non textuelle n'interrompt pas la lecture : elle est notée,
+/// et l'import ne la signale que si sa colonne est réellement utilisée.
+pub(super) fn read_xlsx_rows(path: &Path) -> Result<SourceTable, ExchangeError> {
     let mut workbook = open_workbook_auto(path)?;
     let range = workbook
         .worksheet_range_at(0)
         .ok_or_else(|| ExchangeError::message("Le fichier Excel ne contient aucune feuille."))?
         .map_err(ExchangeError::from)?;
-    let mut rows = Vec::new();
-    for row in range.rows() {
-        let cells = row.iter().map(cell_text).collect::<Result<Vec<_>, _>>()?;
-        if cells.iter().all(|cell| cell.trim().is_empty()) {
+    let first_row = range.start().map(|(row, _)| row as i64).unwrap_or(0);
+    let mut table = SourceTable {
+        rows: Vec::new(),
+        unreadable: Vec::new(),
+    };
+    for (offset, row) in range.rows().enumerate() {
+        let line = first_row + offset as i64 + 1;
+        let mut cells = Vec::with_capacity(row.len());
+        for (column, cell) in row.iter().enumerate() {
+            match cell_text(cell) {
+                Ok(text) => cells.push(text),
+                Err(message) => {
+                    table.unreadable.push(UnreadableCell {
+                        line,
+                        column,
+                        message,
+                    });
+                    cells.push(String::new());
+                }
+            }
+        }
+        if cells.iter().all(|cell| cell.trim().is_empty())
+            && !table.unreadable.iter().any(|cell| cell.line == line)
+        {
             continue;
         }
-        rows.push(cells);
+        table.rows.push(SourceRow { line, cells });
     }
-    if rows.is_empty() {
+    if table.rows.is_empty() {
         return Err(ExchangeError::message("Le fichier Excel est vide."));
     }
-    Ok(rows)
+    Ok(table)
 }
 
-fn cell_text(cell: &Data) -> Result<String, ExchangeError> {
+fn cell_text(cell: &Data) -> Result<String, &'static str> {
     match cell {
         Data::Empty => Ok(String::new()),
         Data::String(value) => Ok(value.clone()),
@@ -83,22 +116,18 @@ fn cell_text(cell: &Data) -> Result<String, ExchangeError> {
         | Data::DateTime(_)
         | Data::DateTimeIso(_)
         | Data::DurationIso(_)
-        | Data::Error(_) => Err(ExchangeError::message(
-            "Une cellule contient une valeur qui n'est pas du texte. Convertissez-la en texte.",
-        )),
+        | Data::Error(_) => {
+            Err("la cellule contient une valeur qui n'est pas du texte. Convertissez-la en texte.")
+        }
     }
 }
 
-fn float_text(value: f64) -> Result<String, ExchangeError> {
+fn float_text(value: f64) -> Result<String, &'static str> {
     if !value.is_finite() {
-        return Err(ExchangeError::message(
-            "Une cellule numérique n'est pas lisible.",
-        ));
+        return Err("la cellule numérique n'est pas lisible.");
     }
     if value.fract() == 0.0 && value.abs() < 1_000_000_000_000.0 {
         return Ok((value as i64).to_string());
     }
-    Err(ExchangeError::message(
-        "Une cellule numérique n'est pas acceptée. Saisissez le texte de l'article.",
-    ))
+    Err("la cellule numérique n'est pas acceptée. Saisissez le texte de l'article.")
 }

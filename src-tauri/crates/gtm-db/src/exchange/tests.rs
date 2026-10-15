@@ -633,3 +633,150 @@ fn l_export_de_l_historique_affiche_et_filtre_en_heure_locale() {
     assert_eq!(rows[1][0], local_display);
     let _ = fs::remove_dir_all(dir);
 }
+
+#[test]
+fn le_pdf_rend_la_typographie_courante_sans_point_d_interrogation() {
+    let (dir, mut conn) = open();
+    // Nom court : le PDF tronque les cellules d'une colonne étroite.
+    let id = product(&mut conn, "l’joint – “A”", "MAS-1");
+    let inventory = create_inventory(
+        &mut conn,
+        InventoryDraft {
+            name: Some("Zone A".into()),
+            comment: None,
+        },
+    )
+    .expect("inventaire");
+    add_inventory_products(&mut conn, inventory.id, &[id]).expect("ligne");
+    let path = dir.join("inventaire.pdf");
+    export_inventory(&conn, &path, ExportFormat::Pdf, inventory.id).expect("pdf");
+    let text = String::from_utf8_lossy(&fs::read(&path).expect("lu")).into_owned();
+    let drawn = text
+        .lines()
+        .filter(|line| line.contains(") Tj"))
+        .collect::<Vec<_>>();
+    assert!(
+        drawn.iter().all(|line| !line.contains('?')),
+        "glyphe manquant : {drawn:#?}"
+    );
+    // Tiret cadratin du titre, apostrophe et tiret demi-cadratin du nom (WinAnsi).
+    assert!(text.contains("(Inventaire \\227 Zone A)"));
+    assert!(text.contains("\\222") && text.contains("\\226"));
+    // Le signe moins du périmètre devient un trait d'union.
+    assert!(text.contains("compt\\351e - stock"));
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn une_colonne_excel_ignoree_ne_bloque_pas_l_import() {
+    use rust_xlsxwriter::{ExcelDateTime, Format, Workbook};
+    let (dir, mut conn) = open();
+    let path = dir.join("articles.xlsx");
+    let mut workbook = Workbook::new();
+    let sheet = workbook.add_worksheet();
+    for (column, header) in ["Nom", "Type", "Référence", "Prix HT", "Ajouté le"]
+        .iter()
+        .enumerate()
+    {
+        sheet
+            .write_string(0, column as u16, *header)
+            .expect("en-tête");
+    }
+    let date = ExcelDateTime::from_ymd(2026, 1, 2).expect("date");
+    let day = Format::new().set_num_format("dd/mm/yyyy");
+    sheet.write_string(1, 0, "Mastic").expect("cellule");
+    sheet.write_string(1, 1, "Silicone").expect("cellule");
+    sheet.write_number(1, 2, 300).expect("cellule");
+    sheet.write_number(1, 3, 12.5).expect("cellule");
+    sheet
+        .write_datetime_with_format(1, 4, &date, &day)
+        .expect("cellule");
+    // Une valeur décimale dans une colonne utilisée reste signalée, avec sa ligne.
+    sheet.write_string(2, 0, "Joint").expect("cellule");
+    sheet.write_string(2, 1, "Silicone").expect("cellule");
+    sheet.write_number(2, 2, 12.5).expect("cellule");
+    // Une rangée vide hormis une date dans une colonne ignorée est sautée.
+    sheet
+        .write_datetime_with_format(3, 4, &date, &day)
+        .expect("cellule");
+    workbook.save(&path).expect("xlsx");
+
+    let preview = preview_article_import(&conn, &path).expect("aperçu");
+    assert_eq!(preview.ready.len(), 1);
+    assert_eq!(preview.ready[0].reference.as_deref(), Some("300"));
+    assert_eq!(preview.issues.len(), 1);
+    assert_eq!(preview.issues[0].line, 3);
+    assert!(preview.issues[0].message.starts_with("Colonne Référence"));
+    assert_eq!(preview.ignored_columns, vec!["Prix HT", "Ajouté le"]);
+    assert!(commit_article_import(&mut conn, &path).is_err());
+    assert_eq!(count(&conn, "SELECT COUNT(*) FROM products"), 0);
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn les_numeros_de_ligne_suivent_le_fichier_malgre_les_lignes_vides() {
+    use rust_xlsxwriter::Workbook;
+    let (dir, conn) = open();
+    let csv = dir.join("articles.csv");
+    fs::write(
+        &csv,
+        "Nom;Type;Description\r\n\r\nMastic;Silicone;\"Sur\ndeux lignes\"\r\n\r\nJoint;;\r\n",
+    )
+    .expect("csv");
+    let preview = preview_article_import(&conn, &csv).expect("aperçu csv");
+    assert_eq!(preview.ready[0].line, 3);
+    assert_eq!(preview.issues[0].line, 6);
+
+    let xlsx = dir.join("articles.xlsx");
+    let mut workbook = Workbook::new();
+    let sheet = workbook.add_worksheet();
+    // Le tableau commence à la ligne 2 de la feuille, avec une ligne vide.
+    sheet.write_string(1, 0, "Nom").expect("cellule");
+    sheet.write_string(1, 1, "Type").expect("cellule");
+    sheet.write_string(3, 0, "Mastic").expect("cellule");
+    sheet.write_string(3, 1, "Silicone").expect("cellule");
+    sheet.write_string(4, 0, "Joint").expect("cellule");
+    workbook.save(&xlsx).expect("xlsx");
+    let preview = preview_article_import(&conn, &xlsx).expect("aperçu xlsx");
+    assert_eq!(preview.ready[0].line, 4);
+    assert_eq!(preview.issues[0].line, 5);
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn l_apercu_compare_references_et_noms_comme_l_import() {
+    let (dir, mut conn) = open();
+    product(&mut conn, "Existant", "ÉTANCHE-1");
+    let (type_id, _) = ids(&conn);
+    conn.execute(
+        "UPDATE product_types SET name = 'Étanchéité' WHERE id = ?1",
+        [type_id],
+    )
+    .expect("type accentué");
+    let path = dir.join("articles.csv");
+    fs::write(
+        &path,
+        "Nom;Type;Référence\nDoublon;étanchéité;étanche-1\nNouveau;ÉTANCHÉITÉ;é-2\nCopie;Étanchéité;É-2\n",
+    )
+    .expect("csv");
+    let preview = preview_article_import(&conn, &path).expect("aperçu");
+    let lines = preview
+        .issues
+        .iter()
+        .map(|issue| issue.line)
+        .collect::<Vec<_>>();
+    assert_eq!(lines, vec![2, 4], "{:?}", preview.issues);
+    assert_eq!(preview.ready.len(), 1);
+    assert_eq!(preview.ready[0].line, 3);
+    assert!(commit_article_import(&mut conn, &path).is_err());
+
+    fs::write(&path, "Nom;Type;Référence\nNouveau;ÉTANCHÉITÉ;é-2\n").expect("csv");
+    assert!(
+        preview_article_import(&conn, &path)
+            .expect("aperçu")
+            .issues
+            .is_empty()
+    );
+    assert_eq!(commit_article_import(&mut conn, &path).expect("import"), 1);
+    let _ = fs::remove_dir_all(dir);
+}

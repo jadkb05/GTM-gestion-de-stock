@@ -187,6 +187,59 @@ describe("saisie d'un inventaire", () => {
     expect(onStockChanged).toHaveBeenCalled();
   });
 
+  it("bloque la validation tant qu'une quantité modifiée n'est pas enregistrée", async () => {
+    const line = {
+      id: 11,
+      productId: 1,
+      productName: "Colle",
+      productReference: "COL-1",
+      typeName: "Autre",
+      theoretical: "10",
+      counted: "80",
+      current: "10",
+      variance: "70",
+      drifted: false,
+    };
+    const saved = detail({
+      lines: [line],
+      counts: { counted: 1, unchanged: 0, surplus: 1, shortage: 0, uncounted: 0, stale: 0 },
+    });
+    const corrected = detail({
+      lines: [{ ...line, counted: "8", variance: "-2" }],
+      counts: { counted: 1, unchanged: 0, surplus: 0, shortage: 1, uncounted: 0, stale: 0 },
+    });
+    vi.mocked(invoke).mockImplementation(async (command: string) => {
+      if (command === "save_inventory_counts") {
+        return corrected;
+      }
+      if (command === "validate_inventory") {
+        return { ...corrected, status: "validated", validatedAt: "2026-03-02T10:00:00.000Z" };
+      }
+      return saved;
+    });
+    renderDetail();
+    const button = (await screen.findByRole("button", { name: "Valider l'inventaire" })) as HTMLButtonElement;
+    expect(button.disabled).toBe(false);
+
+    // Correction de la saisie 80 -> 8 sans l'enregistrer : la base contient encore 80.
+    fireEvent.change(screen.getByLabelText("Quantité comptée de Colle"), { target: { value: "8" } });
+    expect(button.disabled).toBe(true);
+    expect(screen.getByText(/1 quantité saisie n'est pas enregistrée\./)).toBeTruthy();
+
+    // Une écriture équivalente (virgule, zéros) n'est pas une modification.
+    fireEvent.change(screen.getByLabelText("Quantité comptée de Colle"), { target: { value: "80,000" } });
+    expect(button.disabled).toBe(false);
+
+    fireEvent.change(screen.getByLabelText("Quantité comptée de Colle"), { target: { value: "8" } });
+    fireEvent.click(screen.getByRole("button", { name: "Enregistrer les quantités" }));
+    expect(await screen.findByText("Manque de 2")).toBeTruthy();
+    expect(button.disabled).toBe(false);
+    fireEvent.click(button);
+    fireEvent.click(screen.getByRole("button", { name: "Confirmer la validation" }));
+    expect(await screen.findByText("Inventaire validé. Il n'est plus modifiable.")).toBeTruthy();
+    expect(invoke).toHaveBeenCalledWith("validate_inventory", { id: 4 });
+  });
+
   it("signale un stock modifié et propose de réactualiser", async () => {
     vi.mocked(invoke).mockImplementation(async (command: string) => {
       if (command === "refresh_inventory_line") {

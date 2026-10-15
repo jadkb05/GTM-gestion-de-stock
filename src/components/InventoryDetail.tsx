@@ -78,6 +78,22 @@ const toneText = {
   neutral: "text-ink",
 } as const;
 
+// La validation applique les quantités enregistrées, pas celles des champs.
+// Une saisie différente de la valeur enregistrée doit donc d'abord être enregistrée.
+function sameCount(draft: string, counted: string | null) {
+  const raw = draft.trim();
+  if (raw.length === 0 || counted === null) {
+    return raw.length === 0 && counted === null;
+  }
+  const typed = parseNonNegative(raw);
+  const saved = parseNonNegative(counted);
+  return "milli" in typed && "milli" in saved && typed.milli === saved.milli;
+}
+
+function unsavedLines(lines: InventoryLine[], drafts: Record<number, string>) {
+  return lines.filter((line) => !sameCount(drafts[line.id] ?? "", line.counted)).length;
+}
+
 function draftsFrom(lines: InventoryLine[]) {
   const drafts: Record<number, string> = {};
   for (const line of lines) {
@@ -221,6 +237,11 @@ export function InventoryDetail({ inventoryId, onBack, onOpenSheet, onStockChang
     if (!detail) {
       return;
     }
+    if (unsavedLines(detail.lines, drafts) > 0) {
+      setError("Des quantités saisies ne sont pas enregistrées. Enregistrez-les avant de valider.");
+      setConfirming(false);
+      return;
+    }
     setSaving(true);
     setError(null);
     try {
@@ -238,8 +259,15 @@ export function InventoryDetail({ inventoryId, onBack, onOpenSheet, onStockChang
 
   const locked = detail?.status === "validated";
   const counts = detail?.counts;
+  const unsaved = detail && !locked ? unsavedLines(detail.lines, drafts) : 0;
   const canValidate = Boolean(
-    detail && !locked && detail.lines.length > 0 && counts && counts.uncounted === 0 && counts.stale === 0,
+    detail &&
+      !locked &&
+      detail.lines.length > 0 &&
+      counts &&
+      counts.uncounted === 0 &&
+      counts.stale === 0 &&
+      unsaved === 0,
   );
   const present = new Set(detail?.lines.map((line) => line.productId) ?? []);
   const visibleProducts = products.filter((product) => {
@@ -263,6 +291,13 @@ export function InventoryDetail({ inventoryId, onBack, onOpenSheet, onStockChang
   const progress = total === 0 || !counts ? 0 : Math.round((counts.counted / total) * 100);
   const blockers: string[] = [];
   if (detail && !locked) {
+    if (unsaved > 0) {
+      blockers.push(
+        unsaved === 1
+          ? "1 quantité saisie n'est pas enregistrée."
+          : `${unsaved} quantités saisies ne sont pas enregistrées.`,
+      );
+    }
     if (detail.lines.length === 0) {
       blockers.push("Ajoutez au moins un produit.");
     }

@@ -1,6 +1,7 @@
 use super::{csv_io, error::ExchangeError, xlsx_io};
 use crate::catalogue::{ProductDraft, import_products};
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::Connection;
+use std::collections::HashSet;
 use std::path::Path;
 
 const MAX_IMPORT_BYTES: u64 = 8 * 1024 * 1024;
@@ -27,6 +28,24 @@ pub struct ImportPreview {
     pub ready: Vec<ImportReady>,
     pub issues: Vec<ImportIssue>,
     pub ignored_columns: Vec<String>,
+}
+
+/// Rangée lue dans le fichier, avec son numéro de ligne d'origine.
+pub(super) struct SourceRow {
+    pub line: i64,
+    pub cells: Vec<String>,
+}
+
+/// Cellule Excel non textuelle, remplacée par une chaîne vide à la lecture.
+pub(super) struct UnreadableCell {
+    pub line: i64,
+    pub column: usize,
+    pub message: &'static str,
+}
+
+pub(super) struct SourceTable {
+    pub rows: Vec<SourceRow>,
+    pub unreadable: Vec<UnreadableCell>,
 }
 
 struct Prepared {
@@ -69,13 +88,14 @@ pub fn commit_article_import(conn: &mut Connection, path: &Path) -> Result<usize
 }
 
 fn prepare(conn: &Connection, path: &Path) -> Result<Prepared, ExchangeError> {
-    let table = read_table(path)?;
+    let source = read_table(path)?;
+    let table = &source.rows;
     if table.is_empty() {
         return Err(ExchangeError::message(
             "Le fichier ne contient aucun article.",
         ));
     }
-    let header = &table[0];
+    let header = &table[0].cells;
     let columns = header
         .iter()
         .map(|cell| canonical(cell))
@@ -120,17 +140,55 @@ fn prepare(conn: &Connection, path: &Path) -> Result<Prepared, ExchangeError> {
             "Le fichier dépasse 5 000 articles. Découpez-le avant de l'importer.",
         ));
     }
+    let used_columns = [
+        (Some(name_index), "Nom"),
+        (Some(type_index), "Type"),
+        (reference_index, "Référence"),
+        (supplier_index, "Fournisseur"),
+        (description_index, "Description"),
+    ];
+    let existing_references = folded_references(conn)?;
+    let types = folded_names(conn, "product_types")?;
+    let suppliers = folded_names(conn, "suppliers")?;
     let mut ready = Vec::new();
     let mut issues = Vec::new();
     let mut drafts = Vec::new();
-    let mut seen_references = Vec::new();
-    for (offset, row) in table.iter().enumerate().skip(1) {
-        let line = (offset + 1) as i64;
-        if row.iter().all(|cell| cell.trim().is_empty()) {
+    let mut seen_references: Vec<(String, i64)> = Vec::new();
+    for source_row in table.iter().skip(1) {
+        let line = source_row.line;
+        let row = &source_row.cells;
+        let unreadable = source
+            .unreadable
+            .iter()
+            .filter(|cell| cell.line == line)
+            .collect::<Vec<_>>();
+        let unreadable_used = unreadable.iter().any(|cell| {
+            stock_indexes.contains(&cell.column)
+                || used_columns
+                    .iter()
+                    .any(|(index, _)| *index == Some(cell.column))
+        });
+        if row.iter().all(|cell| cell.trim().is_empty()) && !unreadable_used {
             continue;
         }
+        for cell in &unreadable {
+            if stock_indexes.contains(&cell.column) {
+                continue;
+            }
+            if let Some((_, label)) = used_columns
+                .iter()
+                .find(|(index, _)| *index == Some(cell.column))
+            {
+                issues.push(ImportIssue {
+                    line,
+                    message: format!("Colonne {label} : {}", cell.message),
+                });
+            }
+        }
         for index in &stock_indexes {
-            if row.get(*index).is_some_and(|cell| !cell.trim().is_empty()) {
+            let filled = row.get(*index).is_some_and(|cell| !cell.trim().is_empty())
+                || unreadable.iter().any(|cell| cell.column == *index);
+            if filled {
                 issues.push(ImportIssue {
                     line,
                     message: "Le stock et le seuil ne sont pas importés. Saisissez une entrée de stock pour tracer le mouvement.".into(),
@@ -166,7 +224,7 @@ fn prepare(conn: &Connection, path: &Path) -> Result<Prepared, ExchangeError> {
             });
         }
         if let Some(reference) = &reference {
-            let key = ascii_lower(reference);
+            let key = fold(reference);
             if let Some(previous) = seen_references.iter().find(|(seen, _)| seen == &key) {
                 issues.push(ImportIssue {
                     line,
@@ -176,7 +234,7 @@ fn prepare(conn: &Connection, path: &Path) -> Result<Prepared, ExchangeError> {
                     ),
                 });
             } else {
-                seen_references.push((key, line));
+                seen_references.push((key.clone(), line));
             }
             if reference.chars().count() > 64 {
                 issues.push(ImportIssue {
@@ -184,7 +242,7 @@ fn prepare(conn: &Connection, path: &Path) -> Result<Prepared, ExchangeError> {
                     message: "La référence dépasse 64 caractères.".into(),
                 });
             }
-            if reference_exists(conn, reference)? {
+            if existing_references.contains(&key) {
                 issues.push(ImportIssue {
                     line,
                     message: format!("La référence « {reference} » est déjà utilisée."),
@@ -203,7 +261,7 @@ fn prepare(conn: &Connection, path: &Path) -> Result<Prepared, ExchangeError> {
         let type_id = if type_name.is_empty() {
             None
         } else {
-            match lookup_named(conn, "product_types", &type_name, "type")? {
+            match lookup_named(&types, &type_name) {
                 NameLookup::Missing => {
                     issues.push(ImportIssue {
                         line,
@@ -224,7 +282,7 @@ fn prepare(conn: &Connection, path: &Path) -> Result<Prepared, ExchangeError> {
             }
         };
         let supplier_id = if let Some(supplier_name) = &supplier_name {
-            match lookup_named(conn, "suppliers", supplier_name, "fournisseur")? {
+            match lookup_named(&suppliers, supplier_name) {
                 NameLookup::Missing => {
                     issues.push(ImportIssue {
                         line,
@@ -281,7 +339,7 @@ fn prepare(conn: &Connection, path: &Path) -> Result<Prepared, ExchangeError> {
     })
 }
 
-fn read_table(path: &Path) -> Result<Vec<Vec<String>>, ExchangeError> {
+fn read_table(path: &Path) -> Result<SourceTable, ExchangeError> {
     if path.as_os_str().is_empty() {
         return Err(ExchangeError::message("Indiquez un fichier à importer."));
     }
@@ -306,9 +364,9 @@ fn read_table(path: &Path) -> Result<Vec<Vec<String>>, ExchangeError> {
     match extension.as_str() {
         "csv" => {
             let bytes = std::fs::read(path)?;
-            csv_io::read_csv(&bytes)
+            csv_io::read_csv_rows(&bytes)
         }
-        "xlsx" => xlsx_io::read_xlsx(path),
+        "xlsx" => xlsx_io::read_xlsx_rows(path),
         _ => Err(ExchangeError::message(
             "Importez un fichier CSV ou Excel (.xlsx).",
         )),
@@ -355,17 +413,10 @@ fn canonical(value: &str) -> String {
         .to_lowercase()
 }
 
-fn ascii_lower(value: &str) -> String {
-    value
-        .chars()
-        .map(|char| {
-            if char.is_ascii_uppercase() {
-                char.to_ascii_lowercase()
-            } else {
-                char
-            }
-        })
-        .collect()
+/// Même comparaison que le catalogue (`same_name`) : sans tenir compte
+/// de la casse, accents compris. L'aperçu annonce ainsi ce que l'import fera.
+fn fold(value: &str) -> String {
+    value.to_lowercase()
 }
 
 enum NameLookup {
@@ -374,36 +425,47 @@ enum NameLookup {
     Missing,
 }
 
-fn lookup_named(
-    conn: &Connection,
-    table: &str,
-    name: &str,
-    _kind: &str,
-) -> Result<NameLookup, ExchangeError> {
-    if table != "product_types" && table != "suppliers" {
-        return Err(ExchangeError::message("L'import n'a pas pu être préparé."));
-    }
-    let sql = format!("SELECT id, is_active FROM {table} WHERE name = ?1 COLLATE NOCASE");
-    let found = conn
-        .query_row(&sql, params![name], |row| {
-            Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)? == 1))
-        })
-        .optional()
-        .map_err(|_| ExchangeError::message("L'import n'a pas pu être préparé."))?;
-    Ok(match found {
-        Some((id, true)) => NameLookup::Active(id),
-        Some((_, false)) => NameLookup::Inactive,
+fn lookup_named(names: &[(String, i64, bool)], name: &str) -> NameLookup {
+    let key = fold(name);
+    match names.iter().find(|(folded, _, _)| *folded == key) {
+        Some((_, id, true)) => NameLookup::Active(*id),
+        Some((_, _, false)) => NameLookup::Inactive,
         None => NameLookup::Missing,
-    })
+    }
 }
 
-fn reference_exists(conn: &Connection, reference: &str) -> Result<bool, ExchangeError> {
-    let count: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM products WHERE reference = ?1 COLLATE NOCASE",
-            params![reference],
-            |row| row.get(0),
-        )
-        .map_err(|_| ExchangeError::message("L'import n'a pas pu être préparé."))?;
-    Ok(count > 0)
+fn folded_names(conn: &Connection, table: &str) -> Result<Vec<(String, i64, bool)>, ExchangeError> {
+    let sql = match table {
+        "product_types" => "SELECT id, name, is_active FROM product_types ORDER BY id",
+        "suppliers" => "SELECT id, name, is_active FROM suppliers ORDER BY id",
+        _ => return Err(ExchangeError::message("L'import n'a pas pu être préparé.")),
+    };
+    let failed = |_| ExchangeError::message("L'import n'a pas pu être préparé.");
+    let mut statement = conn.prepare(sql).map_err(failed)?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok((
+                fold(&row.get::<_, String>(1)?),
+                row.get::<_, i64>(0)?,
+                row.get::<_, i64>(2)? == 1,
+            ))
+        })
+        .map_err(failed)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(failed)?;
+    Ok(rows)
+}
+
+fn folded_references(conn: &Connection) -> Result<HashSet<String>, ExchangeError> {
+    let failed = |_| ExchangeError::message("L'import n'a pas pu être préparé.");
+    let mut statement = conn
+        .prepare("SELECT reference FROM products WHERE reference IS NOT NULL")
+        .map_err(failed)?;
+    let references = statement
+        .query_map([], |row| row.get::<_, String>(0))
+        .map_err(failed)?
+        .map(|reference| reference.map(|value| fold(&value)))
+        .collect::<Result<HashSet<_>, _>>()
+        .map_err(failed)?;
+    Ok(references)
 }

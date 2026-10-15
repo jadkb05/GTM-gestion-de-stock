@@ -337,7 +337,9 @@ fn le_filtre_de_periode_utilise_la_date_locale_du_poste() {
     )
     .expect("mouvement");
     let local_day: String = conn
-        .query_row("SELECT date(?1, 'localtime')", params![stamp], |row| row.get(0))
+        .query_row("SELECT date(?1, 'localtime')", params![stamp], |row| {
+            row.get(0)
+        })
         .expect("jour local");
 
     let same_day = list_sheet_movements(

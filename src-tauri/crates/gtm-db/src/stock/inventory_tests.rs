@@ -806,7 +806,10 @@ fn une_sortie_egale_au_stock_vide_le_produit_et_le_seuil_zero_alerte() {
         },
     )
     .expect("sortie de tout le stock");
-    assert_eq!(get_product_stock(&conn, id).expect("stock").quantity_milli, 0);
+    assert_eq!(
+        get_product_stock(&conn, id).expect("stock").quantity_milli,
+        0
+    );
 
     let alerts = list_reorder_alerts(&conn, &empty_query()).expect("rupture");
     assert_eq!(alerts.len(), 1);
@@ -814,5 +817,91 @@ fn une_sortie_egale_au_stock_vide_le_produit_et_le_seuil_zero_alerte() {
     let overview = crate::stock::stock_overview(&conn).expect("tableau de bord");
     assert_eq!(overview.out_of_stock, 1);
     assert_eq!(overview.reorder_alerts, 1);
+    fs::remove_dir_all(dir).ok();
+}
+
+#[test]
+fn un_inventaire_valide_conserve_ses_ecarts_sans_reference_perimee() {
+    let (dir, mut conn) = open();
+    let shortage = product(&mut conn, "Manque");
+    let surplus = product(&mut conn, "Surplus");
+    let exact = product(&mut conn, "Exact");
+    enter(&mut conn, shortage, "10");
+    enter(&mut conn, surplus, "5");
+    enter(&mut conn, exact, "3");
+    let inventory = create_inventory(
+        &mut conn,
+        InventoryDraft {
+            name: None,
+            comment: None,
+        },
+    )
+    .expect("inventaire");
+    let detail = add_inventory_products(&mut conn, inventory.id, &[shortage, surplus, exact])
+        .expect("ajout");
+    let counts = detail
+        .lines
+        .iter()
+        .map(|line| CountInput {
+            line_id: line.id,
+            quantity: Some(
+                match line.product_id {
+                    id if id == shortage => "8",
+                    id if id == surplus => "7",
+                    _ => "3",
+                }
+                .into(),
+            ),
+        })
+        .collect::<Vec<_>>();
+    save_inventory_counts(&mut conn, inventory.id, &counts).expect("comptage");
+
+    let validated = validate_inventory(&mut conn, inventory.id).expect("validation");
+
+    // Le solde corrigé diffère de l'instantané : ce n'est pas une référence périmée.
+    assert!(validated.lines.iter().all(|line| !line.drifted));
+    assert_eq!(validated.counts.stale, 0);
+    assert_eq!(validated.counts.shortage, 1);
+    assert_eq!(validated.counts.surplus, 1);
+    assert_eq!(validated.counts.unchanged, 1);
+    let reread = get_inventory(&conn, inventory.id).expect("relecture");
+    assert_eq!(reread.counts, validated.counts);
+    let listed = list_inventories(&conn).expect("liste");
+    assert_eq!(listed[0].variance_count, 2);
+    assert!(
+        check_inventory_drift(&conn, inventory.id)
+            .expect("écarts")
+            .is_empty()
+    );
+
+    // Un mouvement postérieur ne réécrit pas l'historique de l'inventaire validé.
+    leave(&mut conn, surplus, "1");
+    let later = get_inventory(&conn, inventory.id).expect("relecture tardive");
+    assert_eq!(later.counts, validated.counts);
+    assert_eq!(list_inventories(&conn).expect("liste")[0].variance_count, 2);
+    fs::remove_dir_all(dir).ok();
+}
+
+#[test]
+fn un_brouillon_signale_toujours_une_reference_perimee() {
+    let (dir, mut conn) = open();
+    let id = product(&mut conn, "Colle");
+    enter(&mut conn, id, "4");
+    let (inventory_id, line_id) = started(&mut conn, id);
+    save_inventory_counts(
+        &mut conn,
+        inventory_id,
+        &[CountInput {
+            line_id,
+            quantity: Some("2".into()),
+        }],
+    )
+    .expect("comptage");
+    assert_eq!(list_inventories(&conn).expect("liste")[0].variance_count, 1);
+    enter(&mut conn, id, "1");
+    let detail = get_inventory(&conn, inventory_id).expect("détail");
+    assert!(detail.lines[0].drifted);
+    assert_eq!(detail.counts.stale, 1);
+    assert_eq!(list_inventories(&conn).expect("liste")[0].variance_count, 0);
     fs::remove_dir_all(dir).ok();
 }

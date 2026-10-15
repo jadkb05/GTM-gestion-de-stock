@@ -83,6 +83,7 @@ pub fn create_backup(
             .map_err(|_| BackupError::message("La sauvegarde n'a pas pu être créée."))?;
         copy_database(source, &mut target)?;
         stamp_backup(&target, app_version)?;
+        single_file(&target)?;
         let report = validate_connection(&target)?;
         drop(target);
         Ok(report)
@@ -140,6 +141,16 @@ pub fn restore_backup(
     let _report = inspect_backup(backup_path)?;
     let rollback_path = app_data_dir.join(ROLLBACK_NAME);
     let incoming_path = app_data_dir.join(INCOMING_NAME);
+    // La sauvegarde choisie est copiée avant d'écrire le point de retour :
+    // le fichier choisi peut être ce point de retour lui-même.
+    snapshot_into(&open_readonly(backup_path)?, &incoming_path)?;
+    let incoming_report = match validate_connection(&open_readonly(&incoming_path)?) {
+        Ok(report) => report,
+        Err(error) => {
+            let _ = fs::remove_file(&incoming_path);
+            return Err(error);
+        }
+    };
     let live = match crate::connect(app_data_dir) {
         Ok(connection) => Some(connection),
         Err(error) if database_is_damaged(&error) => {
@@ -162,8 +173,6 @@ pub fn restore_backup(
             }
         }
     }
-    snapshot_into(&open_readonly(backup_path)?, &incoming_path)?;
-    let incoming_report = validate_connection(&open_readonly(&incoming_path)?)?;
     if let Some(live) = &live {
         checkpoint_truncate(live)?;
     }
@@ -276,6 +285,7 @@ fn snapshot_into(source: &Connection, destination: &Path) -> Result<(), BackupEr
     let copied = (|| {
         let mut target = open_writable(&temporary)?;
         copy_database(source, &mut target)?;
+        single_file(&target)?;
         drop(target);
         replace_file(&temporary, destination)
     })();
@@ -312,6 +322,20 @@ fn copy_database(source: &Connection, target: &mut Connection) -> Result<(), Bac
             }
         }
     }
+}
+
+/// La copie hérite du mode WAL de la base active. Une copie autonome, sans
+/// fichiers -wal et -shm, reste lisible depuis un support en lecture seule.
+fn single_file(connection: &Connection) -> Result<(), BackupError> {
+    let mode: String = connection
+        .query_row("PRAGMA journal_mode = DELETE", [], |row| row.get(0))
+        .map_err(|_| BackupError::message("La copie de la base n'a pas pu être finalisée."))?;
+    if !mode.eq_ignore_ascii_case("delete") {
+        return Err(BackupError::message(
+            "La copie de la base n'a pas pu être finalisée.",
+        ));
+    }
+    Ok(())
 }
 
 fn stamp_backup(connection: &Connection, app_version: &str) -> Result<(), BackupError> {

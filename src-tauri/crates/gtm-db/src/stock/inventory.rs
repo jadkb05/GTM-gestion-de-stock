@@ -116,8 +116,8 @@ pub fn list_inventories(conn: &Connection) -> Result<Vec<InventoryListItem>, Sto
                  JOIN stock_balances b ON b.product_id = l.product_id
                  WHERE l.inventory_id = i.id
                    AND l.counted_milli IS NOT NULL
-                   AND b.quantity_milli = l.theoretical_milli
-                   AND l.counted_milli <> l.theoretical_milli)
+                   AND l.counted_milli <> l.theoretical_milli
+                   AND (i.status = 'validated' OR b.quantity_milli = l.theoretical_milli))
              FROM inventories i
              ORDER BY i.created_at DESC, i.id DESC",
         )
@@ -187,7 +187,10 @@ pub fn get_inventory(conn: &Connection, id: i64) -> Result<InventoryDetail, Stoc
         .optional()
         .map_err(|_| failed())?
         .ok_or_else(|| StockError::NotFound("Cet inventaire est introuvable.".into()))?;
-    let lines = load_lines(conn, id)?;
+    // Après validation, l'instantané est l'historique du comptage : le solde
+    // courant a été corrigé et ne signale plus une référence périmée.
+    let frozen = header.3 == "validated";
+    let lines = load_lines(conn, id, frozen)?;
     let counts = summarize(&lines);
     Ok(InventoryDetail {
         id: header.0,
@@ -479,7 +482,7 @@ fn validate_in_transaction(tx: &Transaction<'_>, id: i64) -> Result<(), StockErr
             |row| row.get(0),
         )
         .map_err(|_| failed())?;
-    let lines = load_lines(tx, id)?;
+    let lines = load_lines(tx, id, false)?;
     if lines.is_empty() {
         return Err(StockError::Invalid(
             "Ajoutez au moins un produit à inventorier.".into(),
@@ -644,7 +647,11 @@ fn add_one(tx: &Transaction<'_>, inventory_id: i64, product_id: i64) -> Result<(
     Ok(())
 }
 
-fn load_lines(conn: &Connection, inventory_id: i64) -> Result<Vec<InventoryLine>, StockError> {
+fn load_lines(
+    conn: &Connection,
+    inventory_id: i64,
+    frozen: bool,
+) -> Result<Vec<InventoryLine>, StockError> {
     let mut statement = conn
         .prepare(
             "SELECT
@@ -673,7 +680,7 @@ fn load_lines(conn: &Connection, inventory_id: i64) -> Result<Vec<InventoryLine>
                 counted_milli: counted,
                 current_milli: current,
                 variance_milli: counted.map(|value| value - theoretical),
-                drifted: current != theoretical,
+                drifted: !frozen && current != theoretical,
             })
         })
         .map_err(|_| failed())?
