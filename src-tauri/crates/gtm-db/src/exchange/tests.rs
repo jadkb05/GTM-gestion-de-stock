@@ -637,7 +637,7 @@ fn l_export_de_l_historique_affiche_et_filtre_en_heure_locale() {
 #[test]
 fn le_pdf_rend_la_typographie_courante_sans_point_d_interrogation() {
     let (dir, mut conn) = open();
-    // Nom court : le PDF tronque les cellules d'une colonne étroite.
+    // Nom court : il tient sur une ligne de sa colonne.
     let id = product(&mut conn, "l’joint – “A”", "MAS-1");
     let inventory = create_inventory(
         &mut conn,
@@ -778,5 +778,64 @@ fn l_apercu_compare_references_et_noms_comme_l_import() {
             .is_empty()
     );
     assert_eq!(commit_article_import(&mut conn, &path).expect("import"), 1);
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn le_pdf_de_l_historique_ecrit_les_noms_longs_en_entier() {
+    let (dir, mut conn) = open();
+    let name = "Mortier-colle amélioré déformable C2S1 pour carrelage grand format, sac de 25 kg";
+    let id = product(&mut conn, name, "MCA-C2S1-25");
+    record_entry(
+        &mut conn,
+        MovementDraft {
+            product_id: id,
+            quantity: "48".into(),
+            reason: Some("Réception fournisseur, palette complète".into()),
+            document_reference: Some("BL-2026-000412".into()),
+            comment: None,
+        },
+    )
+    .expect("entrée");
+    let path = dir.join("historique.pdf");
+    export_history(
+        &conn,
+        &path,
+        ExportFormat::Pdf,
+        &HistoryExportQuery {
+            search: None,
+            product_id: None,
+            direction: None,
+            from_date: None,
+            to_date: None,
+        },
+    )
+    .expect("pdf");
+    let pdf = fs::read(&path).expect("lu");
+    // Texte du corps (Helvetica 8 pt), regroupé par colonne (abscisse) : les
+    // lignes d'une cellule repliée sont ainsi mises bout à bout.
+    let text = String::from_utf8_lossy(&pdf).into_owned();
+    let mut columns: Vec<(String, String)> = Vec::new();
+    for line in text.lines().filter(|line| line.starts_with("BT /F1 8 Tf")) {
+        let x = line.split(' ').nth(4).expect("x").to_string();
+        let literal = &line[line.find('(').expect("(") + 1..line.rfind(") Tj").expect(")")];
+        match columns.iter_mut().find(|(column, _)| *column == x) {
+            Some((_, written)) => written.push_str(literal),
+            None => columns.push((x, literal.to_string())),
+        }
+    }
+    let body = columns
+        .into_iter()
+        .map(|(_, written)| written.replace(' ', ""))
+        .collect::<Vec<_>>()
+        .join("|");
+    assert!(!body.contains("\\205"), "cellule tronquée : {body}");
+    for expected in [
+        "Mortier-colleam\\351lior\\351d\\351formableC2S1pourcarrelagegrandformat,sacde25kg",
+        "R\\351ceptionfournisseur,palettecompl\\350te",
+        "BL-2026-000412",
+    ] {
+        assert!(body.contains(expected), "{expected} absent de : {body}");
+    }
     let _ = fs::remove_dir_all(dir);
 }
