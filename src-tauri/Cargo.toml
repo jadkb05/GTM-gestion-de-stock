@@ -4,6 +4,12 @@ version = "0.1.0"
 description = "Gestion de stock hors ligne pour le génie civil"
 edition = "2024"
 
+# gtm-db est membre de l'espace de travail : il partage le Cargo.lock de
+# l'application (les versions livrées) et `cargo test` lance aussi ses tests.
+[workspace]
+members = ["crates/gtm-db"]
+default-members = [".", "crates/gtm-db"]
+
 [lib]
 name = "gtm_stock_manager_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]

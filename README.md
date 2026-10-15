@@ -68,8 +68,14 @@ npm run build
 
 - `npm test` : interface (Vitest)
 - `npm run test:db` : base SQLite, migrations et règles du catalogue
+  (crate `gtm-db` seule, sans les bibliothèques GTK/WebKit)
 - `npm run typecheck` : TypeScript
 - `npm run build` : compilation du frontend
+
+`src-tauri` est un espace de travail Cargo dont `crates/gtm-db` est membre :
+les deux crates partagent `src-tauri/Cargo.lock`, celui de l'application
+livrée. Depuis `src-tauri`, `cargo test` lance donc aussi les tests de
+`gtm-db`. `--locked` fait échouer la commande si ce fichier devait changer.
 
 La coque Tauri se vérifie avec `cargo check --manifest-path src-tauri/Cargo.toml`.
 Sur cette machine Linux, la compilation GTK/WebKit utilise les en-têtes extraits

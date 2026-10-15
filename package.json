@@ -8,7 +8,7 @@
     "build": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json && vite build",
     "typecheck": "tsc --noEmit -p tsconfig.json --pretty false && tsc --noEmit -p tsconfig.node.json --pretty false",
     "test": "vitest run",
-    "test:db": "cargo test --manifest-path src-tauri/crates/gtm-db/Cargo.toml",
+    "test:db": "cargo test --locked --manifest-path src-tauri/Cargo.toml -p gtm-db",
     "preview": "vite preview",
     "tauri": "tauri"
   },
