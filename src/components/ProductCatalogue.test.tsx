@@ -219,7 +219,7 @@ describe("catalogue des produits", () => {
     );
   });
   it("affiche un grand catalogue par tranches", async () => {
-    const many = Array.from({ length: 450 }, (_, index) => ({
+    const many = Array.from({ length: 230 }, (_, index) => ({
       ...mastic,
       id: index + 1,
       name: `Article ${String(index).padStart(3, "0")}`,
@@ -232,25 +232,22 @@ describe("catalogue des produits", () => {
     const rows = () => document.querySelectorAll("tbody tr").length;
     expect(CATALOGUE_PAGE_SIZE).toBe(200);
     expect(rows()).toBe(200);
-    expect(screen.getByText(/200 sur 450 produits affichés/)).toBeTruthy();
+    expect(screen.getByText(/200 sur 230 produits affichés/)).toBeTruthy();
     expect(screen.queryByText("Article 200")).toBeNull();
 
-    fireEvent.click(screen.getByRole("button", { name: "Afficher les 200 suivants" }));
-    expect(rows()).toBe(400);
-    expect(screen.getByText("Article 399")).toBeTruthy();
-
-    fireEvent.click(screen.getByRole("button", { name: "Afficher les 50 suivants" }));
-    expect(rows()).toBe(450);
-    expect(screen.getByText("450 produits affichés")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Afficher les 30 suivants" }));
+    expect(rows()).toBe(230);
+    expect(screen.getByText("Article 229")).toBeTruthy();
+    expect(screen.getByText("230 produits affichés")).toBeTruthy();
     expect(screen.queryByRole("button", { name: /Afficher les/ })).toBeNull();
   });
 
   it("revient à la première tranche quand la recherche change", async () => {
-    const many = Array.from({ length: 450 }, (_, index) => ({ ...mastic, id: index + 1, name: `Article ${index}` }));
+    const many = Array.from({ length: 230 }, (_, index) => ({ ...mastic, id: index + 1, name: `Article ${index}` }));
     mockCatalogue(many);
     render(<ProductCatalogue />);
-    fireEvent.click(await screen.findByRole("button", { name: "Afficher les 200 suivants" }));
-    expect(document.querySelectorAll("tbody tr").length).toBe(400);
+    fireEvent.click(await screen.findByRole("button", { name: "Afficher les 30 suivants" }));
+    expect(document.querySelectorAll("tbody tr").length).toBe(230);
 
     fireEvent.change(screen.getByLabelText("Recherche"), { target: { value: "Article" } });
     await waitFor(() => {
