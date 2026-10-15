@@ -113,6 +113,9 @@ fournisseur principal facultatif et une description facultative. Il peut être
 désactivé. Il n'est pas supprimé. Cette phase ne stocke ni prix, ni TVA, ni
 unité commerciale.
 
+La liste affiche 200 produits, puis 200 de plus à la demande ; la recherche
+part après une courte pause de frappe et porte sur tout le catalogue.
+
 Règle d'unicité de la référence : les espaces en trop sont retirés. Une
 référence vide ou composée uniquement d'espaces est enregistrée comme absence
 de référence, et plusieurs produits peuvent ne pas en avoir. Une référence
@@ -225,9 +228,11 @@ Le CSV est en UTF-8, avec une marque d'ordre des octets, le point-virgule comme
 séparateur et la virgule comme séparateur décimal. Un texte qui commence par
 `=`, `+`, `-` ou `@` est préfixé pour ne pas être lu comme une formule, sauf
 s'il s'agit d'une quantité. Le classeur Excel contient une feuille de données
-et une feuille « Périmètre ». Les quantités y sont du texte exact, calculé
-depuis les millièmes entiers. Le PDF est un état paginé, sans valeur de
-facturation. Au-delà de 2 000 lignes, le PDF est refusé au profit du CSV ou
+et une feuille « Périmètre ». Les quantités y sont des nombres, calculés
+depuis les millièmes entiers (au plus trois décimales, valeur exacte) :
+le tableur peut les additionner. Les références restent du texte. Le PDF est
+un état paginé, sans valeur de facturation : chaque cellule y est écrite en
+entier, avec retour à la ligne dans sa colonne. Au-delà de 2 000 lignes, le PDF est refusé au profit du CSV ou
 d'Excel. L'historique exporté n'est pas limité aux 200 lignes de l'écran ni
 aux huit mouvements du tableau de bord.
 
@@ -235,6 +240,8 @@ L'import CSV ou Excel ajoute des articles après aperçu et confirmation.
 Il n'écrit rien si une ligne est refusée. Il ne crée pas de type ni de
 fournisseur, ne remplace pas un article existant et n'enregistre aucun
 mouvement de stock. Un stock présent dans le fichier bloque la ligne.
+L'aperçu note une empreinte du fichier lu ; si le fichier change avant la
+confirmation, l'import est refusé et rien n'est enregistré.
 
 ### Sauvegarde
 
@@ -299,7 +306,8 @@ doivent être encore là.
 
 ## Limites actuelles
 
-- Pas de prix, de TVA ni d'unité commerciale.
+- Pas de prix, de TVA ni d'unité commerciale. Les conditionnements, unités et
+  prix d'achat par produit sont prévus : voir [ROADMAP.md](ROADMAP.md).
 - Pas de commande fournisseur, de multi-entrepôts, ni de facturation.
 - Pas de synchronisation, de compte utilisateur, ni d'e-mail.
 - La sauvegarde est manuelle et locale : pas de copie distante, pas de planification, et pas de protection si toutes les copies sont sur le même disque.
