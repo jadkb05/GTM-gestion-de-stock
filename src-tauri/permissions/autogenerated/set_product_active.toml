@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-set-product-active"
+description = "Enables the set_product_active command without any pre-configured scope."
+commands.allow = ["set_product_active"]
+
+[[permission]]
+identifier = "deny-set-product-active"
+description = "Denies the set_product_active command without any pre-configured scope."
+commands.deny = ["set_product_active"]

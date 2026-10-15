@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-create-product-type"
+description = "Enables the create_product_type command without any pre-configured scope."
+commands.allow = ["create_product_type"]
+
+[[permission]]
+identifier = "deny-create-product-type"
+description = "Denies the create_product_type command without any pre-configured scope."
+commands.deny = ["create_product_type"]

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-list-suppliers"
+description = "Enables the list_suppliers command without any pre-configured scope."
+commands.allow = ["list_suppliers"]
+
+[[permission]]
+identifier = "deny-list-suppliers"
+description = "Denies the list_suppliers command without any pre-configured scope."
+commands.deny = ["list_suppliers"]

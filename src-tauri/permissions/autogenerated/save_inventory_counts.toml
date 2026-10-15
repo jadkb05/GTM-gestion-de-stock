@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-save-inventory-counts"
+description = "Enables the save_inventory_counts command without any pre-configured scope."
+commands.allow = ["save_inventory_counts"]
+
+[[permission]]
+identifier = "deny-save-inventory-counts"
+description = "Denies the save_inventory_counts command without any pre-configured scope."
+commands.deny = ["save_inventory_counts"]

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-list-stock-sheet-movements"
+description = "Enables the list_stock_sheet_movements command without any pre-configured scope."
+commands.allow = ["list_stock_sheet_movements"]
+
+[[permission]]
+identifier = "deny-list-stock-sheet-movements"
+description = "Denies the list_stock_sheet_movements command without any pre-configured scope."
+commands.deny = ["list_stock_sheet_movements"]

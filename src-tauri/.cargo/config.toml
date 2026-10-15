@@ -1,0 +1,5 @@
+# Utilisé seulement pour une compilation croisée GNU.
+# Une compilation sur Windows avec les Build Tools Microsoft utilise
+# la cible x86_64-pc-windows-msvc et ignore ce lien.
+[target.x86_64-pc-windows-gnu]
+linker = "x86_64-w64-mingw32-gcc"

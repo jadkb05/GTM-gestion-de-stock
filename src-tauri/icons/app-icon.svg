@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-18.25 -9.93 144 144" width="1024" height="1024" role="img" aria-label="GTM Bâtiment">
+  <defs>
+    <linearGradient id="gtm-b" x1="0" y1="1" x2="1" y2="0"><stop offset="0.45" stop-color="#004489"/><stop offset="1" stop-color="#2862aa"/></linearGradient>
+    <linearGradient id="gtm-r" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#b8060f"/><stop offset="0.5" stop-color="#fe000c"/><stop offset="1" stop-color="#ff4d53"/></linearGradient>
+  </defs>
+  <path fill="url(#gtm-b)" d="M1.50 77.50Q0.00 77.50 0.00 76.00L0.00 38.03Q0.00 31.03 6.06 27.53L47.69 3.50Q53.75 0.00 59.81 3.50L101.44 27.53Q107.50 31.03 107.50 38.03L107.50 76.00Q107.50 77.50 106.00 77.50Z"/>
+  <path fill="url(#gtm-r)" d="M0.00 90.00Q0.00 88.50 1.50 88.50L106.00 88.50Q107.50 88.50 107.50 90.00L107.50 90.80Q107.50 93.10 101.44 96.60L59.81 120.63Q53.75 124.13 47.69 120.63L6.06 96.60Q0.00 93.10 0.00 90.80Z"/>
+</svg>

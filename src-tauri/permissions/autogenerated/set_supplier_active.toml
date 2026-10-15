@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-set-supplier-active"
+description = "Enables the set_supplier_active command without any pre-configured scope."
+commands.allow = ["set_supplier_active"]
+
+[[permission]]
+identifier = "deny-set-supplier-active"
+description = "Denies the set_supplier_active command without any pre-configured scope."
+commands.deny = ["set_supplier_active"]

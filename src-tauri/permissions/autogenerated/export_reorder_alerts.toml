@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-export-reorder-alerts"
+description = "Enables the export_reorder_alerts command without any pre-configured scope."
+commands.allow = ["export_reorder_alerts"]
+
+[[permission]]
+identifier = "deny-export-reorder-alerts"
+description = "Denies the export_reorder_alerts command without any pre-configured scope."
+commands.deny = ["export_reorder_alerts"]

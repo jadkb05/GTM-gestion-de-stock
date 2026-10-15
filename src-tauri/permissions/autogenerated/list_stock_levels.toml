@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-list-stock-levels"
+description = "Enables the list_stock_levels command without any pre-configured scope."
+commands.allow = ["list_stock_levels"]
+
+[[permission]]
+identifier = "deny-list-stock-levels"
+description = "Denies the list_stock_levels command without any pre-configured scope."
+commands.deny = ["list_stock_levels"]

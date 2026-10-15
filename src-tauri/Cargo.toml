@@ -1,0 +1,26 @@
+[package]
+name = "gtm-stock-manager"
+version = "0.1.0"
+description = "Gestion de stock hors ligne pour le génie civil"
+edition = "2024"
+
+[lib]
+name = "gtm_stock_manager_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+gtm-db = { path = "crates/gtm-db" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = 3
+panic = "abort"
+strip = true
