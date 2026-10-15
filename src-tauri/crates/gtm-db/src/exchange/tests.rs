@@ -72,6 +72,18 @@ fn product(conn: &mut rusqlite::Connection, name: &str, reference: &str) -> i64 
     .id
 }
 
+/// Import tel que l'interface le fait : avec l'empreinte de l'aperçu.
+/// Si l'aperçu échoue, l'import échoue sur la même lecture, avant la comparaison.
+fn import_after_preview(
+    conn: &mut rusqlite::Connection,
+    path: &Path,
+) -> Result<usize, super::ExchangeError> {
+    let fingerprint = preview_article_import(conn, path)
+        .map(|preview| preview.fingerprint)
+        .unwrap_or_default();
+    commit_article_import(conn, path, &fingerprint)
+}
+
 fn catalogue_query(status: ActivityFilter) -> ProductQuery {
     ProductQuery {
         search: None,
@@ -407,7 +419,7 @@ fn importe_un_csv_apres_apercu_sans_creer_de_stock() {
     assert!(preview.issues.is_empty(), "{:?}", preview.issues);
     assert_eq!(preview.ready[0].name, "Étanchéité");
     assert_eq!(count(&conn, "SELECT COUNT(*) FROM products"), 0);
-    let created = commit_article_import(&mut conn, &path).expect("import");
+    let created = import_after_preview(&mut conn, &path).expect("import");
     assert_eq!(created, 1);
     assert_eq!(count(&conn, "SELECT COUNT(*) FROM products"), 1);
     assert_eq!(count(&conn, "SELECT COUNT(*) FROM stock_movements"), 0);
@@ -449,7 +461,7 @@ fn annule_l_import_quand_une_ligne_est_invalide_et_preserve_le_stock() {
             .iter()
             .any(|issue| issue.message.contains("n'existe pas"))
     );
-    assert!(commit_article_import(&mut conn, &path).is_err());
+    assert!(import_after_preview(&mut conn, &path).is_err());
     assert_eq!(count(&conn, "SELECT COUNT(*) FROM products"), 1);
     assert_eq!(
         get_product_stock(&conn, existing)
@@ -472,7 +484,7 @@ fn annule_l_import_quand_une_ligne_est_invalide_et_preserve_le_stock() {
             .iter()
             .any(|issue| issue.message.contains("stock"))
     );
-    assert!(commit_article_import(&mut conn, &stock_file).is_err());
+    assert!(import_after_preview(&mut conn, &stock_file).is_err());
     assert_eq!(count(&conn, "SELECT COUNT(*) FROM products"), 1);
     assert_eq!(count(&conn, "SELECT COUNT(*) FROM stock_movements"), 1);
     let _ = fs::remove_dir_all(dir);
@@ -501,7 +513,7 @@ fn refuse_les_references_en_double_les_fournisseurs_inconnus_et_un_fichier_mal_f
             .iter()
             .any(|issue| issue.message.contains("déjà utilisée"))
     );
-    assert!(commit_article_import(&mut conn, &duplicates).is_err());
+    assert!(import_after_preview(&mut conn, &duplicates).is_err());
     assert_eq!(count(&conn, "SELECT COUNT(*) FROM products"), 1);
 
     let unknown = dir.join("fournisseur.csv");
@@ -544,7 +556,7 @@ fn n_execute_pas_le_contenu_importe_et_signale_une_ecriture_impossible() {
         "Nom;Type\n\"Robert'); DROP TABLE products;--\";Silicone\n",
     )
     .expect("fichier");
-    commit_article_import(&mut conn, &path).expect("import texte");
+    import_after_preview(&mut conn, &path).expect("import texte");
     assert_eq!(
         count(
             &conn,
@@ -591,7 +603,7 @@ fn l_apercu_seul_n_ecrit_rien() {
             .iter()
             .any(|issue| issue.message.contains("désactivé"))
     );
-    assert!(commit_article_import(&mut conn, &blocked).is_err());
+    assert!(import_after_preview(&mut conn, &blocked).is_err());
     assert_eq!(count(&conn, "SELECT COUNT(*) FROM products"), 0);
     let _ = fs::remove_dir_all(dir);
 }
@@ -708,7 +720,7 @@ fn une_colonne_excel_ignoree_ne_bloque_pas_l_import() {
     assert_eq!(preview.issues[0].line, 3);
     assert!(preview.issues[0].message.starts_with("Colonne Référence"));
     assert_eq!(preview.ignored_columns, vec!["Prix HT", "Ajouté le"]);
-    assert!(commit_article_import(&mut conn, &path).is_err());
+    assert!(import_after_preview(&mut conn, &path).is_err());
     assert_eq!(count(&conn, "SELECT COUNT(*) FROM products"), 0);
     let _ = fs::remove_dir_all(dir);
 }
@@ -768,7 +780,7 @@ fn l_apercu_compare_references_et_noms_comme_l_import() {
     assert_eq!(lines, vec![2, 4], "{:?}", preview.issues);
     assert_eq!(preview.ready.len(), 1);
     assert_eq!(preview.ready[0].line, 3);
-    assert!(commit_article_import(&mut conn, &path).is_err());
+    assert!(import_after_preview(&mut conn, &path).is_err());
 
     fs::write(&path, "Nom;Type;Référence\nNouveau;ÉTANCHÉITÉ;é-2\n").expect("csv");
     assert!(
@@ -777,7 +789,7 @@ fn l_apercu_compare_references_et_noms_comme_l_import() {
             .issues
             .is_empty()
     );
-    assert_eq!(commit_article_import(&mut conn, &path).expect("import"), 1);
+    assert_eq!(import_after_preview(&mut conn, &path).expect("import"), 1);
     let _ = fs::remove_dir_all(dir);
 }
 
@@ -999,5 +1011,50 @@ fn les_quantites_excel_sont_des_nombres_exacts() {
         .find(|row| row[product_column] == Data::String("Treillis".into()))
         .expect("ligne non comptée");
     assert!(matches!(uncounted[counted], Data::Empty));
+    let _ = fs::remove_dir_all(dir);
+}
+
+#[test]
+fn refuse_un_fichier_modifie_entre_l_apercu_et_l_import() {
+    let (dir, mut conn) = open();
+    let path = dir.join("articles.csv");
+    fs::write(&path, "Nom;Type\nMastic;Silicone\n").expect("fichier");
+    let preview = preview_article_import(&conn, &path).expect("aperçu");
+    assert_eq!(preview.ready.len(), 1);
+
+    // Une ligne ajoutée après l'aperçu : l'import n'enregistre rien.
+    fs::write(&path, "Nom;Type\nMastic;Silicone\nJoint;Silicone\n").expect("modifié");
+    let error =
+        commit_article_import(&mut conn, &path, &preview.fingerprint).expect_err("fichier modifié");
+    assert!(
+        error.to_string().contains("modifié depuis l'aperçu"),
+        "{error}"
+    );
+    assert_eq!(count(&conn, "SELECT COUNT(*) FROM products"), 0);
+
+    // Même contenu réécrit : l'empreinte porte sur le contenu, l'import passe.
+    let preview = preview_article_import(&conn, &path).expect("nouvel aperçu");
+    fs::write(&path, "Nom;Type\nMastic;Silicone\nJoint;Silicone\n").expect("réécrit");
+    assert_eq!(
+        commit_article_import(&mut conn, &path, &preview.fingerprint).expect("import"),
+        2
+    );
+
+    // Excel : une cellule changée suffit.
+    let xlsx = dir.join("articles.xlsx");
+    let write = |name: &str| {
+        let mut workbook = rust_xlsxwriter::Workbook::new();
+        let sheet = workbook.add_worksheet();
+        sheet.write_string(0, 0, "Nom").expect("en-tête");
+        sheet.write_string(0, 1, "Type").expect("en-tête");
+        sheet.write_string(1, 0, name).expect("cellule");
+        sheet.write_string(1, 1, "Silicone").expect("cellule");
+        workbook.save(&xlsx).expect("xlsx");
+    };
+    write("Colle");
+    let preview = preview_article_import(&conn, &xlsx).expect("aperçu xlsx");
+    write("Colle PU");
+    assert!(commit_article_import(&mut conn, &xlsx, &preview.fingerprint).is_err());
+    assert_eq!(count(&conn, "SELECT COUNT(*) FROM products"), 2);
     let _ = fs::remove_dir_all(dir);
 }

@@ -47,6 +47,7 @@ pub struct ImportPreviewDto {
     ready: Vec<ImportReadyDto>,
     issues: Vec<ImportIssueDto>,
     ignored_columns: Vec<String>,
+    fingerprint: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -180,14 +181,19 @@ pub fn preview_article_import(app: AppHandle, path: String) -> Result<ImportPrev
                 })
                 .collect(),
             ignored_columns: preview.ignored_columns,
+            fingerprint: preview.fingerprint,
         })
         .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
-pub fn commit_article_import(app: AppHandle, path: String) -> Result<ImportResultDto, String> {
+pub fn commit_article_import(
+    app: AppHandle,
+    path: String,
+    fingerprint: String,
+) -> Result<ImportResultDto, String> {
     let mut conn = db::open(&app)?;
-    gtm_db::commit_article_import(&mut conn, &destination(path))
+    gtm_db::commit_article_import(&mut conn, &destination(path), &fingerprint)
         .map(|created| ImportResultDto { created })
         .map_err(|error| error.to_string())
 }

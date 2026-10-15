@@ -28,6 +28,9 @@ pub struct ImportPreview {
     pub ready: Vec<ImportReady>,
     pub issues: Vec<ImportIssue>,
     pub ignored_columns: Vec<String>,
+    /// Empreinte des octets lus pour cet aperçu. L'import la redemande : un
+    /// fichier modifié entre l'aperçu et l'import est refusé.
+    pub fingerprint: String,
 }
 
 /// Rangée lue dans le fichier, avec son numéro de ligne d'origine.
@@ -60,8 +63,17 @@ pub fn preview_article_import(
     Ok(prepare(conn, path)?.preview)
 }
 
-pub fn commit_article_import(conn: &mut Connection, path: &Path) -> Result<usize, ExchangeError> {
+pub fn commit_article_import(
+    conn: &mut Connection,
+    path: &Path,
+    fingerprint: &str,
+) -> Result<usize, ExchangeError> {
     let prepared = prepare(conn, path)?;
+    if prepared.preview.fingerprint != fingerprint {
+        return Err(ExchangeError::message(
+            "Le fichier a été modifié depuis l'aperçu. Aucun article n'a été enregistré. Relancez l'import pour vérifier son nouveau contenu.",
+        ));
+    }
     if !prepared.preview.issues.is_empty() {
         let details = prepared
             .preview
@@ -88,7 +100,14 @@ pub fn commit_article_import(conn: &mut Connection, path: &Path) -> Result<usize
 }
 
 fn prepare(conn: &Connection, path: &Path) -> Result<Prepared, ExchangeError> {
-    let source = read_table(path)?;
+    // Le fichier est lu une seule fois : l'empreinte et l'analyse portent
+    // sur les mêmes octets.
+    let (bytes, kind) = read_source(path)?;
+    let fingerprint = fingerprint(&bytes);
+    let source = match kind {
+        SourceKind::Csv => csv_io::read_csv_rows(&bytes)?,
+        SourceKind::Xlsx => xlsx_io::read_xlsx_rows(&bytes)?,
+    };
     let table = &source.rows;
     if table.is_empty() {
         return Err(ExchangeError::message(
@@ -334,12 +353,18 @@ fn prepare(conn: &Connection, path: &Path) -> Result<Prepared, ExchangeError> {
             ready,
             issues,
             ignored_columns,
+            fingerprint,
         },
         drafts,
     })
 }
 
-fn read_table(path: &Path) -> Result<SourceTable, ExchangeError> {
+enum SourceKind {
+    Csv,
+    Xlsx,
+}
+
+fn read_source(path: &Path) -> Result<(Vec<u8>, SourceKind), ExchangeError> {
     if path.as_os_str().is_empty() {
         return Err(ExchangeError::message("Indiquez un fichier à importer."));
     }
@@ -351,26 +376,39 @@ fn read_table(path: &Path) -> Result<SourceTable, ExchangeError> {
             "Indiquez un fichier, pas un dossier.",
         ));
     }
+    let too_large =
+        || ExchangeError::message("Le fichier dépasse 8 Mo. Découpez-le avant de l'importer.");
     if metadata.len() > MAX_IMPORT_BYTES {
-        return Err(ExchangeError::message(
-            "Le fichier dépasse 8 Mo. Découpez-le avant de l'importer.",
-        ));
+        return Err(too_large());
     }
     let extension = path
         .extension()
         .and_then(|value| value.to_str())
         .unwrap_or("")
         .to_ascii_lowercase();
-    match extension.as_str() {
-        "csv" => {
-            let bytes = std::fs::read(path)?;
-            csv_io::read_csv_rows(&bytes)
+    let kind = match extension.as_str() {
+        "csv" => SourceKind::Csv,
+        "xlsx" => SourceKind::Xlsx,
+        _ => {
+            return Err(ExchangeError::message(
+                "Importez un fichier CSV ou Excel (.xlsx).",
+            ));
         }
-        "xlsx" => xlsx_io::read_xlsx_rows(path),
-        _ => Err(ExchangeError::message(
-            "Importez un fichier CSV ou Excel (.xlsx).",
-        )),
+    };
+    let bytes = std::fs::read(path)?;
+    if bytes.len() as u64 > MAX_IMPORT_BYTES {
+        return Err(too_large());
     }
+    Ok((bytes, kind))
+}
+
+/// Taille et FNV-1a 64 bits du contenu : détecte une modification du
+/// fichier entre l'aperçu et l'import (pas une protection cryptographique).
+fn fingerprint(bytes: &[u8]) -> String {
+    let hash = bytes.iter().fold(0xcbf2_9ce4_8422_2325_u64, |hash, byte| {
+        (hash ^ u64::from(*byte)).wrapping_mul(0x0100_0000_01b3)
+    });
+    format!("{}-{hash:016x}", bytes.len())
 }
 
 fn require_column(columns: &[String], names: &[&str], label: &str) -> Result<usize, ExchangeError> {

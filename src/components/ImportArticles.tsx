@@ -60,7 +60,7 @@ export function ImportArticles({ onImported }: ImportArticlesProps) {
     setBusy(true);
     setError(null);
     try {
-      const result = await commitArticleImport(path);
+      const result = await commitArticleImport(path, preview.fingerprint);
       setNotice(
         result.created === 1
           ? "1 article importé. Le stock n'a pas été modifié."

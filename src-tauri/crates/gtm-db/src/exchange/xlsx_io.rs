@@ -1,7 +1,8 @@
 use super::import::{SourceRow, SourceTable, UnreadableCell};
 use super::{Report, error::ExchangeError, generated_at};
-use calamine::{Data, Reader, open_workbook_auto};
+use calamine::{Data, Reader, Xlsx, open_workbook_from_rs};
 use rust_xlsxwriter::{Format, Workbook};
+use std::io::Cursor;
 use std::path::Path;
 
 pub(super) fn write_xlsx(path: &Path, report: &Report) -> Result<(), ExchangeError> {
@@ -91,7 +92,7 @@ fn sheet_name(name: &str) -> String {
 
 #[cfg(test)]
 pub(super) fn read_xlsx(path: &Path) -> Result<Vec<Vec<String>>, ExchangeError> {
-    Ok(read_xlsx_rows(path)?
+    Ok(read_xlsx_rows(&std::fs::read(path)?)?
         .rows
         .into_iter()
         .map(|row| row.cells)
@@ -101,8 +102,8 @@ pub(super) fn read_xlsx(path: &Path) -> Result<Vec<Vec<String>>, ExchangeError> 
 /// Lit la première feuille avec le numéro de ligne Excel de chaque rangée.
 /// Une cellule non textuelle n'interrompt pas la lecture : elle est notée,
 /// et l'import ne la signale que si sa colonne est réellement utilisée.
-pub(super) fn read_xlsx_rows(path: &Path) -> Result<SourceTable, ExchangeError> {
-    let mut workbook = open_workbook_auto(path)?;
+pub(super) fn read_xlsx_rows(bytes: &[u8]) -> Result<SourceTable, ExchangeError> {
+    let mut workbook: Xlsx<_> = open_workbook_from_rs(Cursor::new(bytes))?;
     let range = workbook
         .worksheet_range_at(0)
         .ok_or_else(|| ExchangeError::message("Le fichier Excel ne contient aucune feuille."))?

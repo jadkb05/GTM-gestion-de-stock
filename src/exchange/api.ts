@@ -26,6 +26,8 @@ export type ImportPreview = {
   ready: ImportReady[];
   issues: ImportIssue[];
   ignoredColumns: string[];
+  /** Empreinte du fichier lu pour l'aperçu, redemandée à l'import. */
+  fingerprint: string;
 };
 
 function optionalId(value: string): number | null {
@@ -95,6 +97,6 @@ export function previewArticleImport(path: string): Promise<ImportPreview> {
   return invoke<ImportPreview>("preview_article_import", { path });
 }
 
-export function commitArticleImport(path: string): Promise<{ created: number }> {
-  return invoke<{ created: number }>("commit_article_import", { path });
+export function commitArticleImport(path: string, fingerprint: string): Promise<{ created: number }> {
+  return invoke<{ created: number }>("commit_article_import", { path, fingerprint });
 }

@@ -46,6 +46,12 @@ impl From<calamine::Error> for ExchangeError {
     }
 }
 
+impl From<calamine::XlsxError> for ExchangeError {
+    fn from(_: calamine::XlsxError) -> Self {
+        Self::message("Le fichier Excel n'a pas pu être lu.")
+    }
+}
+
 impl From<rust_xlsxwriter::XlsxError> for ExchangeError {
     fn from(_: rust_xlsxwriter::XlsxError) -> Self {
         Self::message("Le fichier Excel n'a pas pu être écrit.")

@@ -27,6 +27,7 @@ describe("import d'articles", () => {
           ready: [],
           issues: [{ line: 2, message: "Le type « Inconnu » n'existe pas. Il ne sera pas créé." }],
           ignoredColumns: [],
+          fingerprint: "57-00f1c2a9d3b4e5f6",
         };
       }
       return { created: 1 };
@@ -52,6 +53,7 @@ describe("import d'articles", () => {
           ready: [{ line: 2, name: "Étanchéité", reference: "ET-1", typeName: "Silicone", supplierName: "Selena", description: null }],
           issues: [],
           ignoredColumns: [],
+          fingerprint: "57-00f1c2a9d3b4e5f6",
         };
       }
       if (command === "commit_article_import") {
@@ -67,7 +69,11 @@ describe("import d'articles", () => {
     fireEvent.click(screen.getByRole("button", { name: "Confirmer l'import" }));
     expect(await screen.findByRole("status")).toBeTruthy();
     expect(screen.getByRole("status").textContent).toContain("Le stock n'a pas été modifié.");
-    expect(invoke).toHaveBeenCalledWith("commit_article_import", { path: "/tmp/articles.csv" });
+    // L'import renvoie l'empreinte de l'aperçu : un fichier modifié entre-temps est refusé.
+    expect(invoke).toHaveBeenCalledWith("commit_article_import", {
+      path: "/tmp/articles.csv",
+      fingerprint: "57-00f1c2a9d3b4e5f6",
+    });
     expect(onImported).toHaveBeenCalled();
   });
 });
