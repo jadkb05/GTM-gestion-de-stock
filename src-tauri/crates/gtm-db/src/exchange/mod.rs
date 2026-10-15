@@ -35,6 +35,8 @@ struct Report {
     sheet_name: String,
     headers: Vec<String>,
     rows: Vec<Vec<String>>,
+    /// Colonnes de quantités (format `display_milli`) : nombres dans Excel.
+    quantity_columns: Vec<usize>,
 }
 
 /// Date de génération affichée dans le PDF, à l'heure locale du poste comme

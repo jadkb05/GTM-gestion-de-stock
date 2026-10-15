@@ -113,6 +113,7 @@ pub fn export_reorder(
         title: "Produits à réapprovisionner".into(),
         scope: scope.into(),
         sheet_name: "Réapprovisionnement".into(),
+        quantity_columns: vec![4, 5],
         headers: vec![
             "Produit".into(),
             "Référence".into(),
@@ -203,6 +204,7 @@ fn catalogue_report(conn: &Connection, query: &ProductQuery) -> Result<Report, E
         title: "Catalogue et stocks".into(),
         scope,
         sheet_name: "Catalogue".into(),
+        quantity_columns: vec![5, 6],
         headers: vec![
             "Identifiant".into(),
             "Référence".into(),
@@ -304,6 +306,7 @@ fn history_report(conn: &Connection, query: &HistoryExportQuery) -> Result<Repor
         title: "Historique des mouvements".into(),
         scope: scope.into(),
         sheet_name: "Mouvements".into(),
+        quantity_columns: vec![4],
         headers: vec![
             "Date".into(),
             "Produit".into(),
@@ -387,6 +390,7 @@ fn inventory_report(conn: &Connection, inventory_id: i64) -> Result<Report, Exch
             "{status}. Écart = quantité comptée − stock de référence figé. Une cellule vide n'est pas un zéro."
         ),
         sheet_name: "Inventaire".into(),
+        quantity_columns: vec![6, 7, 8],
         headers: vec![
             "Inventaire".into(),
             "Date".into(),

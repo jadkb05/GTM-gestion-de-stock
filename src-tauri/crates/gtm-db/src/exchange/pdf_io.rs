@@ -581,6 +581,7 @@ mod tests {
             title: "Historique des mouvements".into(),
             scope: "Tous les mouvements".into(),
             sheet_name: "Historique".into(),
+            quantity_columns: vec![4],
             headers: [
                 "Date",
                 "Produit",

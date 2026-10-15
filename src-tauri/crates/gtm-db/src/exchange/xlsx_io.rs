@@ -13,9 +13,26 @@ pub(super) fn write_xlsx(path: &Path, report: &Report) -> Result<(), ExchangeErr
         data.write_string_with_format(0, column as u16, header, &bold)?;
         data.set_column_width(column as u16, 18)?;
     }
+    let whole = Format::new().set_num_format("#,##0");
+    let decimal = Format::new().set_num_format("#,##0.###");
     for (row_index, row) in report.rows.iter().enumerate() {
+        let line = (row_index + 1) as u32;
         for (column, cell) in row.iter().enumerate() {
-            data.write_string((row_index + 1) as u32, column as u16, cell)?;
+            let quantity = report
+                .quantity_columns
+                .contains(&column)
+                .then(|| quantity_value(cell))
+                .flatten();
+            match quantity {
+                Some((value, is_whole)) => {
+                    let format = if is_whole { &whole } else { &decimal };
+                    data.write_number_with_format(line, column as u16, value, format)?;
+                }
+                None if cell.is_empty() => {}
+                None => {
+                    data.write_string(line, column as u16, cell)?;
+                }
+            }
         }
     }
     let scope = workbook.add_worksheet();
@@ -34,6 +51,24 @@ pub(super) fn write_xlsx(path: &Path, report: &Report) -> Result<(), ExchangeErr
     scope.set_column_width(1, 80)?;
     workbook.save(path)?;
     Ok(())
+}
+
+/// Quantité affichée (« -12 345,678 » au plus trois décimales) relue en nombre.
+/// Les quantités ont au plus 14 chiffres significatifs : un f64 les conserve
+/// exactement, comme Excel. Renvoie aussi si la valeur est entière.
+fn quantity_value(cell: &str) -> Option<(f64, bool)> {
+    let text = cell.trim();
+    let (integer, fraction) = text.split_once(',').unwrap_or((text, ""));
+    let digits = integer.strip_prefix('-').unwrap_or(integer);
+    if digits.is_empty()
+        || !digits.bytes().all(|byte| byte.is_ascii_digit())
+        || fraction.len() > 3
+        || !fraction.bytes().all(|byte| byte.is_ascii_digit())
+    {
+        return None;
+    }
+    let value = text.replace(',', ".").parse::<f64>().ok()?;
+    Some((value, fraction.bytes().all(|byte| byte == b'0')))
 }
 
 fn sheet_name(name: &str) -> String {

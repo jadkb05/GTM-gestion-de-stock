@@ -839,3 +839,165 @@ fn le_pdf_de_l_historique_ecrit_les_noms_longs_en_entier() {
     }
     let _ = fs::remove_dir_all(dir);
 }
+
+/// Cellule de la première feuille d'un classeur exporté, telle qu'Excel la lit.
+fn xlsx_cells(path: &Path) -> Vec<Vec<calamine::Data>> {
+    use calamine::{Reader, open_workbook_auto};
+    let mut workbook = open_workbook_auto(path).expect("classeur");
+    let range = workbook
+        .worksheet_range_at(0)
+        .expect("feuille")
+        .expect("lecture");
+    range.rows().map(<[calamine::Data]>::to_vec).collect()
+}
+
+fn column(rows: &[Vec<calamine::Data>], header: &str) -> usize {
+    rows[0]
+        .iter()
+        .position(|cell| *cell == calamine::Data::String(header.into()))
+        .unwrap_or_else(|| panic!("colonne {header} absente"))
+}
+
+#[test]
+fn les_quantites_excel_sont_des_nombres_exacts() {
+    use calamine::Data;
+    let (dir, mut conn) = open();
+    let id = product(&mut conn, "Primaire", "00123");
+    let other = product(&mut conn, "Treillis", "TRE");
+    for (product_id, quantity) in [(id, "2,5"), (id, "0,001"), (other, "999999999,999")] {
+        record_entry(
+            &mut conn,
+            MovementDraft {
+                product_id,
+                quantity: quantity.into(),
+                reason: None,
+                document_reference: None,
+                comment: None,
+            },
+        )
+        .expect("entrée");
+    }
+    set_reorder_threshold(&mut conn, id, Some("10,25")).expect("seuil");
+
+    // Historique : chaque quantité est un nombre, et leur somme est exacte.
+    let history = dir.join("historique.xlsx");
+    export_history(
+        &conn,
+        &history,
+        ExportFormat::Xlsx,
+        &HistoryExportQuery {
+            search: None,
+            product_id: None,
+            direction: None,
+            from_date: None,
+            to_date: None,
+        },
+    )
+    .expect("historique");
+    let rows = xlsx_cells(&history);
+    let quantity = column(&rows, "Quantité");
+    let mut values = rows[1..]
+        .iter()
+        .map(|row| match row[quantity] {
+            Data::Float(value) => value,
+            ref other => panic!("quantité non numérique : {other:?}"),
+        })
+        .collect::<Vec<_>>();
+    values.sort_by(f64::total_cmp);
+    assert_eq!(values, vec![0.001, 2.5, 999_999_999.999]);
+    let reference = column(&rows, "Référence");
+    assert!(
+        rows[1..]
+            .iter()
+            .any(|row| row[reference] == Data::String("00123".into()))
+    );
+
+    // Catalogue : stock et seuil numériques, seuil absent laissé vide.
+    let catalogue = dir.join("catalogue.xlsx");
+    export_catalogue(
+        &conn,
+        &catalogue,
+        ExportFormat::Xlsx,
+        &catalogue_query(ActivityFilter::All),
+    )
+    .expect("catalogue");
+    let rows = xlsx_cells(&catalogue);
+    let (name, stock, threshold) = (
+        column(&rows, "Nom"),
+        column(&rows, "Stock actuel"),
+        column(&rows, "Seuil"),
+    );
+    let primaire = rows
+        .iter()
+        .find(|row| row[name] == Data::String("Primaire".into()))
+        .expect("Primaire");
+    assert_eq!(primaire[stock], Data::Float(2.501));
+    assert_eq!(primaire[threshold], Data::Float(10.25));
+    let treillis = rows
+        .iter()
+        .find(|row| row[name] == Data::String("Treillis".into()))
+        .expect("Treillis");
+    assert!(matches!(treillis[threshold], Data::Empty));
+
+    // Alertes : stock et seuil numériques.
+    let alerts = dir.join("alertes.xlsx");
+    export_reorder(
+        &conn,
+        &alerts,
+        ExportFormat::Xlsx,
+        &AlertQuery {
+            search: None,
+            type_id: None,
+            supplier_id: None,
+            sort: None,
+        },
+    )
+    .expect("alertes");
+    let rows = xlsx_cells(&alerts);
+    assert_eq!(rows[1][column(&rows, "Seuil")], Data::Float(10.25));
+
+    // Inventaire : écart négatif et ligne non comptée.
+    let inventory = create_inventory(
+        &mut conn,
+        InventoryDraft {
+            name: Some("Zone A".into()),
+            comment: None,
+        },
+    )
+    .expect("inventaire");
+    let detail = add_inventory_products(&mut conn, inventory.id, &[id, other]).expect("lignes");
+    let line = detail
+        .lines
+        .iter()
+        .find(|line| line.product_id == id)
+        .expect("ligne");
+    save_inventory_counts(
+        &mut conn,
+        inventory.id,
+        &[CountInput {
+            line_id: line.id,
+            quantity: Some("1,25".into()),
+        }],
+    )
+    .expect("comptage");
+    let sheet = dir.join("inventaire.xlsx");
+    export_inventory(&conn, &sheet, ExportFormat::Xlsx, inventory.id).expect("inventaire");
+    let rows = xlsx_cells(&sheet);
+    let (product_column, counted, variance) = (
+        column(&rows, "Produit"),
+        column(&rows, "Quantité comptée"),
+        column(&rows, "Écart"),
+    );
+    let counted_row = rows
+        .iter()
+        .find(|row| row[product_column] == Data::String("Primaire".into()))
+        .expect("ligne comptée");
+    assert_eq!(counted_row[counted], Data::Float(1.25));
+    assert_eq!(counted_row[variance], Data::Float(-1.251));
+    let uncounted = rows
+        .iter()
+        .find(|row| row[product_column] == Data::String("Treillis".into()))
+        .expect("ligne non comptée");
+    assert!(matches!(uncounted[counted], Data::Empty));
+    let _ = fs::remove_dir_all(dir);
+}
