@@ -2,7 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { invoke } from "@tauri-apps/api/core";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { NamedRecord, Product } from "../catalogue/types";
-import { ProductCatalogue } from "./ProductCatalogue";
+import { CATALOGUE_PAGE_SIZE, ProductCatalogue } from "./ProductCatalogue";
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
@@ -96,8 +96,11 @@ describe("catalogue des produits", () => {
     fireEvent.change(screen.getByLabelText("Statut"), { target: { value: "inactive" } });
 
     await screen.findByText("Aucun produit ne correspond à ces critères.");
-    expect(invoke).toHaveBeenCalledWith("list_products", {
-      query: { search: "sil", typeId: 1, supplierId: 10, status: "inactive" },
+    // La recherche part après une courte pause de frappe.
+    await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith("list_products", {
+        query: { search: "sil", typeId: 1, supplierId: 10, status: "inactive" },
+      });
     });
   });
 
@@ -214,5 +217,79 @@ describe("catalogue des produits", () => {
     expect((await screen.findByRole("alert")).textContent).toContain(
       "La base locale n'a pas pu être ouverte.",
     );
+  });
+  it("affiche un grand catalogue par tranches", async () => {
+    const many = Array.from({ length: 450 }, (_, index) => ({
+      ...mastic,
+      id: index + 1,
+      name: `Article ${String(index).padStart(3, "0")}`,
+      reference: `GEN-${index}`,
+    }));
+    mockCatalogue(many);
+    render(<ProductCatalogue />);
+
+    await screen.findByText("Article 000");
+    const rows = () => document.querySelectorAll("tbody tr").length;
+    expect(CATALOGUE_PAGE_SIZE).toBe(200);
+    expect(rows()).toBe(200);
+    expect(screen.getByText(/200 sur 450 produits affichés/)).toBeTruthy();
+    expect(screen.queryByText("Article 200")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Afficher les 200 suivants" }));
+    expect(rows()).toBe(400);
+    expect(screen.getByText("Article 399")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: "Afficher les 50 suivants" }));
+    expect(rows()).toBe(450);
+    expect(screen.getByText("450 produits affichés")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Afficher les/ })).toBeNull();
+  });
+
+  it("revient à la première tranche quand la recherche change", async () => {
+    const many = Array.from({ length: 450 }, (_, index) => ({ ...mastic, id: index + 1, name: `Article ${index}` }));
+    mockCatalogue(many);
+    render(<ProductCatalogue />);
+    fireEvent.click(await screen.findByRole("button", { name: "Afficher les 200 suivants" }));
+    expect(document.querySelectorAll("tbody tr").length).toBe(400);
+
+    fireEvent.change(screen.getByLabelText("Recherche"), { target: { value: "Article" } });
+    await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith("list_products", expect.objectContaining({ query: expect.objectContaining({ search: "Article" }) }));
+    });
+    await waitFor(() => expect(document.querySelectorAll("tbody tr").length).toBe(200));
+  });
+
+  it("interroge la base une seule fois quand la frappe s'arrête", async () => {
+    mockCatalogue([mastic]);
+    render(<ProductCatalogue />);
+    await screen.findByText("Mastic façade");
+    vi.mocked(invoke).mockClear();
+
+    const field = screen.getByLabelText("Recherche");
+    fireEvent.change(field, { target: { value: "s" } });
+    fireEvent.change(field, { target: { value: "si" } });
+    fireEvent.change(field, { target: { value: "sil" } });
+
+    await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith("list_products", expect.objectContaining({ query: expect.objectContaining({ search: "sil" }) }));
+    });
+    const searches = vi
+      .mocked(invoke)
+      .mock.calls.filter(([command]) => command === "list_products")
+      .map(([, args]) => (args as { query: { search: string } }).query.search);
+    expect(searches).toEqual(["sil"]);
+  });
+
+  it("garde la liste affichée pendant un rechargement", async () => {
+    mockCatalogue([mastic]);
+    render(<ProductCatalogue />);
+    await screen.findByText("Mastic façade");
+
+    vi.mocked(invoke).mockImplementation(() => new Promise(() => undefined));
+    fireEvent.change(screen.getByLabelText("Statut"), { target: { value: "all" } });
+
+    await waitFor(() => expect(document.querySelector(".table-frame")?.getAttribute("aria-busy")).toBe("true"));
+    expect(screen.getByText("Mastic façade")).toBeTruthy();
+    expect(screen.queryByText("Chargement du catalogue…")).toBeNull();
   });
 });

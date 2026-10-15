@@ -34,8 +34,16 @@ type ProductCatalogueProps = {
 
 const iconButton = "btn btn-ghost btn-sm px-1.5 text-mist hover:text-gtm-blue";
 
+// Construire des milliers de lignes bloque la fenêtre plusieurs secondes : la
+// liste s'affiche par tranches, et la recherche part quand la frappe s'arrête.
+export const CATALOGUE_PAGE_SIZE = 200;
+export const SEARCH_DELAY_MS = 250;
+
 export function ProductCatalogue({ onEntry, onExit, onOpenSheet }: ProductCatalogueProps) {
   const [search, setSearch] = useState("");
+  const [appliedSearch, setAppliedSearch] = useState("");
+  const [shown, setShown] = useState(CATALOGUE_PAGE_SIZE);
+  const [loaded, setLoaded] = useState(false);
   const [typeId, setTypeId] = useState("");
   const [supplierId, setSupplierId] = useState("");
   const [status, setStatus] = useState<ProductStatusFilter>("active");
@@ -51,13 +59,22 @@ export function ProductCatalogue({ onEntry, onExit, onOpenSheet }: ProductCatalo
   const [actionError, setActionError] = useState<string | null>(null);
 
   useEffect(() => {
+    const timer = window.setTimeout(() => setAppliedSearch(search), SEARCH_DELAY_MS);
+    return () => window.clearTimeout(timer);
+  }, [search]);
+
+  useEffect(() => {
+    setShown(CATALOGUE_PAGE_SIZE);
+  }, [appliedSearch, typeId, supplierId, status]);
+
+  useEffect(() => {
     let cancelled = false;
     setLoading(true);
     setError(null);
     Promise.all([
       listProductTypes(true),
       listSuppliers(true),
-      listProducts({ search, typeId, supplierId, status }),
+      listProducts({ search: appliedSearch, typeId, supplierId, status }),
       listStockLevels(),
     ])
       .then(([nextTypes, nextSuppliers, nextProducts, levels]) => {
@@ -69,6 +86,7 @@ export function ProductCatalogue({ onEntry, onExit, onOpenSheet }: ProductCatalo
         setProducts(nextProducts);
         setStock(new Map(levels.map((level) => [level.productId, level.quantity])));
         setLoading(false);
+        setLoaded(true);
       })
       .catch((reason: unknown) => {
         if (cancelled) {
@@ -80,10 +98,12 @@ export function ProductCatalogue({ onEntry, onExit, onOpenSheet }: ProductCatalo
     return () => {
       cancelled = true;
     };
-  }, [search, typeId, supplierId, status, reloadToken]);
+  }, [appliedSearch, typeId, supplierId, status, reloadToken]);
 
   const filtered =
-    search.trim().length > 0 || typeId !== "" || supplierId !== "" || status !== "active";
+    appliedSearch.trim().length > 0 || typeId !== "" || supplierId !== "" || status !== "active";
+  // Pendant un rechargement, la liste précédente reste affichée.
+  const ready = loaded && !error;
 
   async function confirmDisable(product: Product) {
     setActionError(null);
@@ -134,7 +154,9 @@ export function ProductCatalogue({ onEntry, onExit, onOpenSheet }: ProductCatalo
                   ? "L'export reprend les produits correspondant aux filtres affichés, avec le stock du moment."
                   : "L'export reprend les produits actifs affichés, avec le stock du moment."
               }
-              onExport={(path, format) => exportCatalogue(path, format, { search, typeId, supplierId, status })}
+              onExport={(path, format) =>
+                exportCatalogue(path, format, { search: appliedSearch, typeId, supplierId, status })
+              }
             />
             <button type="button" className={buttonClass} onClick={() => setEditor({ mode: "create" })}>
               <Icon name="plus" size={16} />
@@ -199,7 +221,7 @@ export function ProductCatalogue({ onEntry, onExit, onOpenSheet }: ProductCatalo
         </FilterField>
       </FilterBar>
 
-      {loading ? <Loading>Chargement du catalogue…</Loading> : null}
+      {loading && !loaded ? <Loading>Chargement du catalogue…</Loading> : null}
       {error ? (
         <Callout
           tone="danger"
@@ -220,7 +242,7 @@ export function ProductCatalogue({ onEntry, onExit, onOpenSheet }: ProductCatalo
         </Callout>
       ) : null}
 
-      {!loading && !error && products.length === 0 ? (
+      {ready && products.length === 0 ? (
         <EmptyState
           title={filtered ? "Aucun produit ne correspond à ces critères." : "Aucun produit n'est enregistré."}
         >
@@ -235,9 +257,9 @@ export function ProductCatalogue({ onEntry, onExit, onOpenSheet }: ProductCatalo
         </EmptyState>
       ) : null}
 
-      {!loading && !error && products.length > 0 ? (
+      {ready && products.length > 0 ? (
         <>
-          <div className="table-frame table-frame-tall">
+          <div className="table-frame table-frame-tall" aria-busy={loading}>
             <table className="data-table min-w-[38rem]">
               <thead>
                 <tr>
@@ -250,7 +272,7 @@ export function ProductCatalogue({ onEntry, onExit, onOpenSheet }: ProductCatalo
                 </tr>
               </thead>
               <tbody>
-                {products.map((product) => {
+                {products.slice(0, shown).map((product) => {
                   const known = stock.has(product.id);
                   const quantity = stock.get(product.id) ?? "0";
                   const rupture = product.isActive && known && quantity === "0";
@@ -364,10 +386,26 @@ export function ProductCatalogue({ onEntry, onExit, onOpenSheet }: ProductCatalo
               </tbody>
             </table>
           </div>
-          <p className="mt-2 text-meta text-faint">
-            {plural(products.length, "produit affiché", "produits affichés")}
-            {ruptures > 0 ? ` · ${plural(ruptures, "rupture de stock", "ruptures de stock")}` : ""}
-          </p>
+          <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
+            <p className="text-meta text-faint">
+              {products.length > shown
+                ? `${shown} sur ${plural(products.length, "produit affiché", "produits affichés")}`
+                : plural(products.length, "produit affiché", "produits affichés")}
+              {ruptures > 0 ? ` · ${plural(ruptures, "rupture de stock", "ruptures de stock")}` : ""}
+            </p>
+            {products.length > shown ? (
+              <>
+                <button
+                  type="button"
+                  className={`${quietButtonClass} btn-sm`}
+                  onClick={() => setShown((value) => value + CATALOGUE_PAGE_SIZE)}
+                >
+                  Afficher les {Math.min(CATALOGUE_PAGE_SIZE, products.length - shown)} suivants
+                </button>
+                <span className="text-meta text-faint">Ou affinez la recherche.</span>
+              </>
+            ) : null}
+          </div>
         </>
       ) : null}
     </section>
